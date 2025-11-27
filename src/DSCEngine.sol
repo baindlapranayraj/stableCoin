@@ -6,7 +6,6 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     AggregatorV3Interface
 } from "chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-
 import "./Stablecoin.sol";
 
 /**
@@ -22,27 +21,38 @@ import "./Stablecoin.sol";
  * This contract logic is similar to DAI as if DAI has no governance, no fees and was only backed by wETH and wBTC
  */
 contract DSCEngine is ReentrancyGuard {
-    // ======================== Storage Slots ========================
-
-    mapping(address token => address oracleFeedAddress) private oraclePriceFeeds;
-
-    address[] private collateralAddresses;
-
-    // @notice this is for traking amount for each user and for each users token address
-    mapping(address user => mapping(address token => uint256 amount)) private userCollateralDeposited; // collateral user deposited
-
-    mapping(address user => uint256 dscAmountMinted) private dscUserAmount; // stable coins minted per user
-
-    StableCoin private immutable stablCoinContract;
-
-    // ======================== Errors ========================
+    //  ========================
+    //    Errors
+    //  ========================
 
     error DSCEngine_AmountShouldNotBeZero();
     error DSCEngine_InvalidCollateralAddress();
     error DSCEngine_ShouldProvideProperAddress();
     error DSCEngine_ERC20TransferFailed();
+    error DSCEngine_StableCointMitingFailed();
 
-    // ======================== Modifiers ========================
+    // ======================== Storage Slots ========================
+
+    mapping(address token => address oracleFeedAddress)
+        private oraclePriceFeeds;
+
+    address[] private collateralAddresses;
+
+    mapping(address user => mapping(address token => uint256 amount))
+        private userCollateralDeposited; // collateral user deposited
+    mapping(address user => uint256 dscAmountMinted) private dscUserAmount; // stable coins minted per user
+
+    StableCoin private immutable stablCoinContract;
+
+    uint256 private constant ORACLE_PRECISION = 1e18;
+    uint256 private constant PRECISION = 1e2;
+    uint256 private constant LIQUIDATION_THRESHOLD_PERCENTAGE = 75;
+    uint256 private constant COLLATERAL_THRESHOLD_PERCENTAGE = 50;
+    uint256 private constant MINIMUM = 1;
+
+    // ========================
+    // Modifiers
+    // ========================
 
     modifier _checkInputAmount(uint256 amount) {
         require(amount > 0, DSCEngine_AmountShouldNotBeZero());
@@ -56,7 +66,9 @@ contract DSCEngine is ReentrancyGuard {
         _;
     }
 
-    // ======================== Constructor ========================
+    // =====================
+    //  Constructor
+    // =====================
 
     /**
      *
@@ -64,8 +76,15 @@ contract DSCEngine is ReentrancyGuard {
      * @param collateralTokenAddress : An Array of Token Address with respect to each Oracle Price feed inside of oracleFeedAddress
      * @param stableCoinAdress : address of stableCoin Contract
      */
-    constructor(address[] memory oracleFeedAddress, address[] memory collateralTokenAddress, address stableCoinAdress) {
-        require(oracleFeedAddress.length == collateralTokenAddress.length, DSCEngine_ShouldProvideProperAddress());
+    constructor(
+        address[] memory oracleFeedAddress,
+        address[] memory collateralTokenAddress,
+        address stableCoinAdress
+    ) {
+        require(
+            oracleFeedAddress.length == collateralTokenAddress.length,
+            DSCEngine_ShouldProvideProperAddress()
+        );
 
         // setting the OracleFeeAddress
         for (uint8 i = 0; i < oracleFeedAddress.length; i++) {
@@ -78,7 +97,9 @@ contract DSCEngine is ReentrancyGuard {
         collateralAddresses = collateralTokenAddress;
     }
 
-    // ======================== Contract Logic ========================
+    // =====================
+    //   Contract Logic
+    // =====================
 
     function depsoiteCollateralAndMintDsc() external {}
 
@@ -93,52 +114,125 @@ contract DSCEngine is ReentrancyGuard {
     {
         IERC20 ercTokenAddress = IERC20(tokenCollateralAddress);
 
-        // Updating the user Storage
         userCollateralDeposited[msg.sender][tokenCollateralAddress] += amount;
-
-        // Transfering ERC20 tokens to this contract from user
-        // @notic Patric used transferFrom, but why ??
-        require(ercTokenAddress.transfer(address(this), amount), DSCEngine_ERC20TransferFailed());
+        require(
+            ercTokenAddress.transfer(address(this), amount),
+            DSCEngine_ERC20TransferFailed()
+        );
     }
 
-    function mintDSC(
-        uint256 collateralAmount,
-        address to,
-        address stableCoinAddress,
-        address oracleFeedPrice,
-        uint256 amountDSC
-    ) public _checkInputAmount(collateralAmount) _checkInputAmount(amountDSC) {
-        // There will be a threshold for every collateralAmount
-        // we need to check the price of collaterla using Chainlink Oracle
-        // based on price and threshold of minting we will mint the stable coins
-        // we will check the user req stable coin amount with our result
-
+    function mintDSC(uint256 amountDSC) public {
         dscUserAmount[msg.sender] += amountDSC;
+
+        // Checking the health factor before minting
+        _revertIfHealthFactorIsBroken(msg.sender);
+
+        require(
+            mintResult = stablCoinContract.minTokens(msg.sender, amountDSC),
+            DSCEngine_StableCointMitingFailed()
+        );
     }
 
-    function getUserCollateralValue(address user) public view returns (uint256) {
+    // =====================
+    //   Helper Functions
+    // =====================
+
+    function _getUserInfo(
+        address user
+    )
+        private
+        view
+        returns (uint256 stableMintedAmount, uint256 collateralTotalValue)
+    {
+        uint256 stableMintedAmount = dscUserAmount[user];
+
+        uint256 totalCollateralValue = getUserCollateralValue(user);
+
+        return (stableMintedAmount, totalCollateralValue);
+    }
+
+    function getUserCollateralValue(
+        address user
+    ) public view returns (uint256) {
         uint256 totalvalue;
 
         for (uint16 i = 0; i < collateralAddresses.length; i++) {
-            uint256 value = userCollateralDeposited[user][collateralAddresses[i]];
+            uint256 amount = userCollateralDeposited[user][
+                collateralAddresses[i]
+            ];
 
-            totalvalue += value;
+            if (amount > 0) {
+                amountValue = _getUsdcCollateralPrice(
+                    collateralAddresses[i],
+                    amount
+                );
+                totalvalue += amountValue;
+            }
         }
+
+        return totalvalue;
     }
 
-    function getUsdcCollateralPrice(address tokenAddress, uint256 amount) public view returns (uint256) {
-        AggregatorV3Interface oraclePriceFeed = AggregatorV3Interface(oraclePriceFeeds[tokenAddress]);
+    function _getUsdcCollateralPrice(
+        address tokenAddress,
+        uint256 amount
+    ) public view returns (uint256) {
+        AggregatorV3Interface oraclePriceFeed = AggregatorV3Interface(
+            oraclePriceFeeds[tokenAddress]
+        );
 
-        (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
-            oraclePriceFeed.latestRoundData();
+        (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        ) = oraclePriceFeed.latestRoundData();
+
+        // The return price will be in multiple of 1e8 for handling the precision
+
+        // amount * answer (but the answer is scaled to 1e8)
+        uint256 numerator = uint256(answer) * amount;
+        uint256 amountValue = numerator / ORACLE_PRECISION; // removing the precision given from the Chainlink Oracle
+
+        return amountValue;
     }
 
     /**
-     * This function will be used of calculating the helth factor of a loan using oracle price feed
+     * Calculates the health factor of a user's loan position
+     * @notice Health factor = (Total Collateral Valuem * LIQUIDATION_THRESHOLD_PERCENTAGE / Total Borrowed Value)
      *
-     *
+     * @notice the return is in scaled value to 1e4 to preserve the precision
      */
-    function helthFactor() public {}
+    function _healthFactor(address user) private returns (uint256) {
+        (
+            uint256 borrowedValue,
+            uint256 depositedCollateralValue
+        ) = _getUserInfo(user);
+
+        if (borrowedValue == 0) {
+            revert("user havent deposited anything to calculate health factor");
+        }
+
+        uint256 collateralPercentage = depositedCollateralValue *
+            LIQUIDATION_THRESHOLD_PERCENTAGE;
+        uint256 pricisionCollateral = collateralPercentage *
+            PRECISION *
+            PRECISION; // Scaled the value to 1e4
+
+        uint256 weightedCollateralValue = collateralPercentage / PRECISION;
+        uint256 healthFactor = weightedCollateralValue / borrowedValue;
+
+        return healthFactor;
+    }
+
+    function _revertIfHealthFactorIsBroken(address user) internal view {
+        uint256 healthFactor = _healthFactor(user);
+
+        if (healthFactor <= MINIMUM * PRECISION) {
+            revert("Your Health facotr is broken");
+        }
+    }
 }
 
 // Some Learnings during building this contract

@@ -1,4 +1,4 @@
-<img src="./thumbnal.png"/>
+<img src="./thumbnail.png"/>
 
 
 ## Stable Coin 
