@@ -7,7 +7,7 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /**
- * @title Decentralized Stable Coin Palre imetation working model
+ * @title Decentralized Stable Coin Pale imetation working model
  * @author Chinna 🕊️
  * @notice This protocol just demonstrates the working model of the stable coin
  */
@@ -21,17 +21,15 @@ contract StableCoin is ERC20, Ownable, ERC20Burnable {
      * - Using EIP 712 using Openzeppline for the gas less transaction - This is imp for in order to understand hands on
      *
      */
-
     error DecentralizedStableCoin_MustBeMoreThanZero();
     error DecentralizedStableCoin_NotEnoughAmountToBurn();
     error DecentralizedStableCoin_NotZeroAddress();
     error DecentralizedStableCoin_AmountShouldGreaterThanZero();
 
-    constructor(
-        string memory name,
-        string memory symbol,
-        uint256 initialSupply
-    ) ERC20(name, symbol) Ownable(msg.sender) {
+    constructor(string memory name, string memory symbol, uint256 initialSupply)
+        ERC20(name, symbol)
+        Ownable(msg.sender)
+    {
         // Miniting the initial supply to the deployer of this contract
         _mint(msg.sender, initialSupply);
     }
@@ -41,20 +39,14 @@ contract StableCoin is ERC20, Ownable, ERC20Burnable {
 
         require(balanceUser > 0, DecentralizedStableCoin_MustBeMoreThanZero());
 
-        require(
-            balanceUser >= amount,
-            DecentralizedStableCoin_NotEnoughAmountToBurn()
-        );
+        require(balanceUser >= amount, DecentralizedStableCoin_NotEnoughAmountToBurn());
 
         super.burn(amount);
     }
 
     function minTokens(address to, uint256 amount) public onlyOwner {
         require(to != address(0), DecentralizedStableCoin_NotZeroAddress());
-        require(
-            amount > 0,
-            DecentralizedStableCoin_AmountShouldGreaterThanZero()
-        );
+        require(amount > 0, DecentralizedStableCoin_AmountShouldGreaterThanZero());
 
         _mint(to, amount);
     }
@@ -66,8 +58,4 @@ contract StableCoin is ERC20, Ownable, ERC20Burnable {
      *     - transferFrom
      *     - gas_less trx using EIP 712 using openZeplline Contracts
      */
-
-
-    
-
 }
