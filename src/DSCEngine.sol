@@ -3,6 +3,9 @@ pragma solidity ^0.8.13;
 
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    AggregatorV3Interface
+} from "chainlink-brownie-contracts/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 
 import "./Stablecoin.sol";
 
@@ -21,12 +24,12 @@ import "./Stablecoin.sol";
 contract DSCEngine is ReentrancyGuard {
     // ======================== Storage Slots ========================
 
-    mapping(address token => address oracleFeedAddress)
-        private oraclePriceFeeds;
+    mapping(address token => address oracleFeedAddress) private oraclePriceFeeds;
+
+    address[] private collateralAddresses;
 
     // @notice this is for traking amount for each user and for each users token address
-    mapping(address user => mapping(address token => uint256 amount))
-        private collateralDeposited; // collateral user deposited
+    mapping(address user => mapping(address token => uint256 amount)) private userCollateralDeposited; // collateral user deposited
 
     mapping(address user => uint256 dscAmountMinted) private dscUserAmount; // stable coins minted per user
 
@@ -61,15 +64,8 @@ contract DSCEngine is ReentrancyGuard {
      * @param collateralTokenAddress : An Array of Token Address with respect to each Oracle Price feed inside of oracleFeedAddress
      * @param stableCoinAdress : address of stableCoin Contract
      */
-    constructor(
-        address[] memory oracleFeedAddress,
-        address[] memory collateralTokenAddress,
-        address stableCoinAdress
-    ) {
-        require(
-            oracleFeedAddress.length == collateralTokenAddress.length,
-            DSCEngine_ShouldProvideProperAddress()
-        );
+    constructor(address[] memory oracleFeedAddress, address[] memory collateralTokenAddress, address stableCoinAdress) {
+        require(oracleFeedAddress.length == collateralTokenAddress.length, DSCEngine_ShouldProvideProperAddress());
 
         // setting the OracleFeeAddress
         for (uint8 i = 0; i < oracleFeedAddress.length; i++) {
@@ -78,6 +74,8 @@ contract DSCEngine is ReentrancyGuard {
 
         // Creating instance for stableContract
         stablCoinContract = StableCoin(stableCoinAdress);
+
+        collateralAddresses = collateralTokenAddress;
     }
 
     // ======================== Contract Logic ========================
@@ -95,15 +93,12 @@ contract DSCEngine is ReentrancyGuard {
     {
         IERC20 ercTokenAddress = IERC20(tokenCollateralAddress);
 
-        // Updating the Storage
-        collateralDeposited[msg.sender][tokenCollateralAddress] += amount;
+        // Updating the user Storage
+        userCollateralDeposited[msg.sender][tokenCollateralAddress] += amount;
 
         // Transfering ERC20 tokens to this contract from user
         // @notic Patric used transferFrom, but why ??
-        require(
-            ercTokenAddress.transfer(address(this), amount),
-            DSCEngine_ERC20TransferFailed()
-        );
+        require(ercTokenAddress.transfer(address(this), amount), DSCEngine_ERC20TransferFailed());
     }
 
     function mintDSC(
@@ -121,10 +116,28 @@ contract DSCEngine is ReentrancyGuard {
         dscUserAmount[msg.sender] += amountDSC;
     }
 
+    function getUserCollateralValue(address user) public view returns (uint256) {
+        uint256 totalvalue;
+
+        for (uint16 i = 0; i < collateralAddresses.length; i++) {
+            uint256 value = userCollateralDeposited[user][collateralAddresses[i]];
+
+            totalvalue += value;
+        }
+    }
+
+    function getUsdcCollateralPrice(address tokenAddress, uint256 amount) public view returns (uint256) {
+        AggregatorV3Interface oraclePriceFeed = AggregatorV3Interface(oraclePriceFeeds[tokenAddress]);
+
+        (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
+            oraclePriceFeed.latestRoundData();
+    }
+
     /**
      * This function will be used of calculating the helth factor of a loan using oracle price feed
      *
-     * */
+     *
+     */
     function helthFactor() public {}
 }
 
