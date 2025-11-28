@@ -33,15 +33,11 @@ contract DSCEngine is ReentrancyGuard {
 
     // ======================== Storage Slots ========================
 
-    mapping(address token => address oracleFeedAddress)
-        private oraclePriceFeeds;
-
-    address[] private collateralAddresses;
-
-    mapping(address user => mapping(address token => uint256 amount))
-        private userCollateralDeposited; // collateral user deposited
+    mapping(address token => address oracleFeedAddress) private oraclePriceFeeds;
+    mapping(address user => mapping(address token => uint256 amount)) private userCollateralDeposited; // collateral user deposited
     mapping(address user => uint256 dscAmountMinted) private dscUserAmount; // stable coins minted per user
 
+    address[] private collateralAddresses;
     StableCoin private immutable stablCoinContract;
 
     uint256 private constant ORACLE_PRECISION = 1e18;
@@ -76,15 +72,8 @@ contract DSCEngine is ReentrancyGuard {
      * @param collateralTokenAddress : An Array of Token Address with respect to each Oracle Price feed inside of oracleFeedAddress
      * @param stableCoinAdress : address of stableCoin Contract
      */
-    constructor(
-        address[] memory oracleFeedAddress,
-        address[] memory collateralTokenAddress,
-        address stableCoinAdress
-    ) {
-        require(
-            oracleFeedAddress.length == collateralTokenAddress.length,
-            DSCEngine_ShouldProvideProperAddress()
-        );
+    constructor(address[] memory oracleFeedAddress, address[] memory collateralTokenAddress, address stableCoinAdress) {
+        require(oracleFeedAddress.length == collateralTokenAddress.length, DSCEngine_ShouldProvideProperAddress());
 
         // setting the OracleFeeAddress
         for (uint8 i = 0; i < oracleFeedAddress.length; i++) {
@@ -115,10 +104,7 @@ contract DSCEngine is ReentrancyGuard {
         IERC20 ercTokenAddress = IERC20(tokenCollateralAddress);
 
         userCollateralDeposited[msg.sender][tokenCollateralAddress] += amount;
-        require(
-            ercTokenAddress.transfer(address(this), amount),
-            DSCEngine_ERC20TransferFailed()
-        );
+        require(ercTokenAddress.transfer(address(this), amount), DSCEngine_ERC20TransferFailed());
     }
 
     function mintDSC(uint256 amountDSC) public {
@@ -127,45 +113,33 @@ contract DSCEngine is ReentrancyGuard {
         // Checking the health factor before minting
         _revertIfHealthFactorIsBroken(msg.sender);
 
-        require(
-            mintResult = stablCoinContract.minTokens(msg.sender, amountDSC),
-            DSCEngine_StableCointMitingFailed()
-        );
+        stablCoinContract.minTokens(msg.sender, amountDSC);
     }
 
     // =====================
     //   Helper Functions
     // =====================
 
-    function _getUserInfo(
-        address user
-    )
+    function _getUserInfo(address user)
         private
         view
         returns (uint256 stableMintedAmount, uint256 collateralTotalValue)
     {
-        uint256 stableMintedAmount = dscUserAmount[user];
+        uint256 _stableMintedAmount = dscUserAmount[user];
 
-        uint256 totalCollateralValue = getUserCollateralValue(user);
+        uint256 _totalCollateralValue = getUserCollateralValue(user);
 
-        return (stableMintedAmount, totalCollateralValue);
+        return (_stableMintedAmount, _totalCollateralValue);
     }
 
-    function getUserCollateralValue(
-        address user
-    ) public view returns (uint256) {
+    function getUserCollateralValue(address user) public view returns (uint256) {
         uint256 totalvalue;
 
         for (uint16 i = 0; i < collateralAddresses.length; i++) {
-            uint256 amount = userCollateralDeposited[user][
-                collateralAddresses[i]
-            ];
+            uint256 amount = userCollateralDeposited[user][collateralAddresses[i]];
 
             if (amount > 0) {
-                amountValue = _getUsdcCollateralPrice(
-                    collateralAddresses[i],
-                    amount
-                );
+                uint256 amountValue = _getUsdcCollateralPrice(collateralAddresses[i], amount);
                 totalvalue += amountValue;
             }
         }
@@ -173,21 +147,11 @@ contract DSCEngine is ReentrancyGuard {
         return totalvalue;
     }
 
-    function _getUsdcCollateralPrice(
-        address tokenAddress,
-        uint256 amount
-    ) public view returns (uint256) {
-        AggregatorV3Interface oraclePriceFeed = AggregatorV3Interface(
-            oraclePriceFeeds[tokenAddress]
-        );
+    function _getUsdcCollateralPrice(address tokenAddress, uint256 amount) public view returns (uint256) {
+        AggregatorV3Interface oraclePriceFeed = AggregatorV3Interface(oraclePriceFeeds[tokenAddress]);
 
-        (
-            uint80 roundId,
-            int256 answer,
-            uint256 startedAt,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        ) = oraclePriceFeed.latestRoundData();
+        (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound) =
+            oraclePriceFeed.latestRoundData();
 
         // The return price will be in multiple of 1e8 for handling the precision
 
@@ -205,20 +169,14 @@ contract DSCEngine is ReentrancyGuard {
      * @notice the return is in scaled value to 1e4 to preserve the precision
      */
     function _healthFactor(address user) private returns (uint256) {
-        (
-            uint256 borrowedValue,
-            uint256 depositedCollateralValue
-        ) = _getUserInfo(user);
+        (uint256 borrowedValue, uint256 depositedCollateralValue) = _getUserInfo(user);
 
         if (borrowedValue == 0) {
             revert("user havent deposited anything to calculate health factor");
         }
 
-        uint256 collateralPercentage = depositedCollateralValue *
-            LIQUIDATION_THRESHOLD_PERCENTAGE;
-        uint256 pricisionCollateral = collateralPercentage *
-            PRECISION *
-            PRECISION; // Scaled the value to 1e4
+        uint256 collateralPercentage = depositedCollateralValue * LIQUIDATION_THRESHOLD_PERCENTAGE;
+        uint256 pricisionCollateral = collateralPercentage * PRECISION * PRECISION; // Scaled the value to 1e4
 
         uint256 weightedCollateralValue = collateralPercentage / PRECISION;
         uint256 healthFactor = weightedCollateralValue / borrowedValue;
@@ -226,7 +184,7 @@ contract DSCEngine is ReentrancyGuard {
         return healthFactor;
     }
 
-    function _revertIfHealthFactorIsBroken(address user) internal view {
+    function _revertIfHealthFactorIsBroken(address user) internal {
         uint256 healthFactor = _healthFactor(user);
 
         if (healthFactor <= MINIMUM * PRECISION) {
